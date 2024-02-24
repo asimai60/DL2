@@ -59,26 +59,29 @@ class AE(nn.Module):
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
         # num_batches = x.shape[0] // self.batch_size
         for e in range(self.epochs):
-
+            epoch_loss = 0
+            batch_idx = 0
             for batch_idx, x_batch in enumerate(x):
-                
                 optimizer.zero_grad()
                 predictions = self.forward(x_batch)
-                loss = self.criterion(predictions, x_batch)
+                cur_loss = loss = self.criterion(predictions, x_batch)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 optimizer.step()
-                losses.append(loss.item())
+                epoch_loss += cur_loss.item()
+            epoch_loss /= batch_idx
+            losses.append(epoch_loss)
+            
 
             print(f'Epoch: {e+1}/{self.epochs}, Loss: {loss.item()}')
         self.losses = losses
 
 
 def main():
-    input_size = 10
+    input_size = 1
     hidden_size = 5
     num_layers = 5
-    output_size = 10
+    output_size = 1
     epochs = 1000
     optimizer = torch.optim.Adam
     learning_rate = 0.01
@@ -86,10 +89,10 @@ def main():
     batch_size = 32
 
     model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size)
-    x = torch.rand(100, 10, 10)
+    x = torch.rand(100, 10, 1)
     x_loader = DataLoader(x, batch_size=batch_size, shuffle=True)
 
-    print(next(iter(x_loader)))
+    # print(next(iter(x_loader)))
     
     model.train(x_loader)
     predictions = model(x)

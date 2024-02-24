@@ -16,7 +16,7 @@ np.random.seed(seed)
 torch.manual_seed(seed)
 
 # Create synthetic data
-synthetic_data = torch.rand(10_000,1,50)
+synthetic_data = torch.rand(10_000, 50, 1)
 i = np.random.randint(20, 30)
 for x_ in synthetic_data:
     x_[0][i-5:i+5] *= 0.1
@@ -30,14 +30,14 @@ train_data, validation_data, test_data = random_split(synthetic_data, [train_siz
 
 #later turn this into an argparse apllication
 
-input_size = output_size = 50
+input_size = output_size = 1
 
-hidden_size = 10
-num_layers = 2
+hidden_size = 2
+num_layers = 5
 epochs = 50
 optimizer = torch.optim.Adam
 learning_rate = 0.01
-grad_clip = 3
+grad_clip = 1
 batch_size = 32
 
 train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
@@ -51,6 +51,9 @@ model.train(train_loader)
 plt.plot(model.losses)
 plt.xlabel('Epochs')
 plt.ylabel('Loss')
+plt.yscale('log')
+plt.title('Training Loss')
+
 plt.show()
 
 # Test the model
@@ -58,5 +61,3 @@ predictions = model(test_data)
 print(predictions - test_data)
 
 #plot the predictions
-
-
