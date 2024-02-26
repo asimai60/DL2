@@ -14,10 +14,86 @@ from AE import *
 
 import matplotlib.pyplot as plt
 
+class AeWithClassifier(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size, num_classes):
+        super(AeWithClassifier, self).__init__()
+        self.encoder = Encoder(input_size, hidden_size, num_layers)
+        self.decoder = Decoder(hidden_size, hidden_size, num_layers, output_size)
+        self.epochs = epochs
+        self.optimizer = optimizer
+        self.learning_rate = learning_rate
+        self.grad_clip = grad_clip
+        self.batch_size = batch_size
+        self.criterion = nn.MSELoss()
+        self.losses = []
+
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_size, num_classes))
+        self.classifier_criterion = nn.CrossEntropyLoss()
+    
+    def forward(self, x):
+        h_n, c_n = self.encoder(x)
+        repeat_hidden = h_n[-1].unsqueeze(1).repeat(1, x.shape[1], 1)
+        predictions = self.decoder(repeat_hidden, h_n, c_n)
+        context = h_n[-1]
+        classifier_predictions = self.classifier(context)
+        return predictions, classifier_predictions
+    
+    def train(self, x, y):
+        losses = []
+        optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
+
+        for epoch in range(self.epochs):
+            batch_idx = 0
+            for batch_idx, x_batch in enumerate(x):
+                x_batch = x_batch.to(device)
+                y_batch = y[batch_idx*self.batch_size:(batch_idx+1)*self.batch_size]
+
+                optimizer.zero_grad()
+                predictions, classifier_predictions = self.forward(x_batch)
+
+                recon_loss = self.criterion(predictions, x_batch)
+                class_loss = self.classifier_criterion(classifier_predictions, y_batch)
+                loss = recon_loss + class_loss
+
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
+                optimizer.step()
+            losses.append(loss.item())
+            print(f'Epoch: {epoch+1}/{self.epochs}, Loss: {loss.item()}')
+        self.losses = losses
+        
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f'Using {device} device')
+
+parser = argparse.ArgumentParser(description='Train an autoencoder with a classifier on MNIST')
+parser.add_argument('--hidden_size', type=int, default=27, help='Size of the hidden layer')
+parser.add_argument('--num_layers', type=int, default=4, help='Number of layers in the LSTM')
+parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to train the model')
+parser.add_argument('--optimizer', type=str, default='Adam', help='Optimizer to use')
+parser.add_argument('--learning_rate', type=float, default=0.01, help='Learning rate for the optimizer')
+parser.add_argument('--grad_clip', type=int, default=1, help='Gradient clipping value')
+parser.add_argument('--batch_size', type=int, default=64, help='Batch size for training')
+parser.add_argument('--random', action='store_true' , help='Whether to use a random seed')
+args = parser.parse_args()
+
+input_size = output_size = 28
+optimizer_dict = {'Adam': torch.optim.Adam, 'SGD': torch.optim.SGD, 'adagrad': torch.optim.Adagrad, 'adadelta': torch.optim.Adadelta}
+hidden_size = args.hidden_size
+num_layers =  args.num_layers
+epochs = args.epochs
+optimizer = optimizer_dict[args.optimizer]
+learning_rate = args.learning_rate
+grad_clip = args.grad_clip
+batch_size = args.batch_size
+
+
 # Set the random seed for reproducibility
-seed = 42
-np.random.seed(seed)
-torch.manual_seed(seed)
+if not args.random:    
+    seed = 42
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
 #transform the data to a tensor and normalize it
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
@@ -25,72 +101,37 @@ transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
 
 
 #mnist_data is a tensor, it holds num_images X 2, where the first element is the image and the second is the label
-mnist_data = torchvision.datasets.MNIST('mnist_data', train=True, download=True, transform=transform)
+mnist_train_data = torchvision.datasets.MNIST('mnist_data', train=True, download=True, transform=transform)
+mnist_test_data = torchvision.datasets.MNIST('mnist_data', train=False, download=True, transform=transform)
 
-
-#shapes and sizes
-# print(len(mnist_data)) #60000
-# print(mnist_data[0][0].shape) #torch.Size([1, 28, 28])
-# print(mnist_data[0][1]) #5
-
-## plot the first 10 images
-# fig, axs = plt.subplots(2, 5)
-# for i in range(10):
-#     axs[i//5, i%5].imshow(mnist_data[i][0][0])
-#     axs[i//5, i%5].set_title(mnist_data[i][1])
-#     axs[i//5, i%5].axis('off')
-# plt.show()
-
-# mnist_images = mnist_data.data.unsqueeze(1).float()
-# mnist_labels = mnist_data.targets
-
-#shapes and sizes
-# print(mnist_images.shape) #torch.Size([60000, 1, 28, 28])
-# print(mnist_labels.shape) #torch.Size([60000])
-
+# train_data_loader = DataLoader(mnist_train_data, batch_size=64, shuffle=True)
 
 # Create a DataLoader
-total_size = len(mnist_data)
-train_size = int(0.6 * total_size)
-validation_size = test_size = int(0.2 * total_size)
-train_, validation_, test_ = random_split(mnist_data, [train_size, validation_size, test_size])
 
-train_images = torch.stack([image for image, label in train_])
-train_labels = [label for image, label in train_]
-validation_images = torch.stack([image for image, label in validation_])
-validation_labels = [label for image, label in validation_]
-test_images = torch.stack([image for image, label in test_])
-test_labels = [label for image, label in test_]
-
-# print(train_images[0][0].shape)
-# fig, axs = plt.subplots(2, 5)
-# for i in range(10):
-#     axs[i//5, i%5].imshow(train_images[i][0])
-#     axs[i//5, i%5].set_title(train_labels[i])
-#     axs[i//5, i%5].axis('off')
-# plt.show()
+train_images = torch.stack([image for image, label in mnist_train_data]).to(device)
+train_labels = [label for image, label in mnist_train_data]
+test_images = torch.stack([image for image, label in mnist_test_data]).to(device)
+test_labels = [label for image, label in mnist_test_data]
 
 #later turn this into an argparse apllication
-input_size = output_size = 28
-hidden_size = 27
-num_layers = 2
-epochs = 10
-optimizer = torch.optim.Adam
-learning_rate = 0.005
-grad_clip = 0.5
-batch_size = 64
+
+
 
 train_images = train_images.view(-1, 28, 28)
-validation_images = validation_images.view(-1, 28, 28)
 test_images = test_images.view(-1, 28, 28)
 
 
-train_loader = DataLoader(train_images, batch_size=batch_size, shuffle=True)
-validation_loader = DataLoader(validation_images, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_images, batch_size=batch_size, shuffle=True)
+train_loader = DataLoader(train_images, batch_size=batch_size, shuffle=False)
+train_labels_loader = torch.tensor(train_labels).to(device)
+test_loader = DataLoader(test_images, batch_size=batch_size, shuffle=False)
+test_labels_loader = torch.tensor(test_labels).to(device)
 
-model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size)
-model.train(train_loader)
+
+
+model = AeWithClassifier(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size, 10).to(device)
+print("start training....")
+
+model.train(train_loader, train_labels_loader)
 
 # Plot the loss
 plt.plot([i+1 for i in range(epochs)], model.losses)
@@ -99,19 +140,26 @@ plt.xlabel('Epochs')
 plt.ylabel('Loss')
 plt.yscale('log')
 plt.title('Training Loss')
-
+plt.savefig('loss.png')
 plt.show()
 
 # Test the model
-predictions = model(test_images)
+with torch.no_grad():
+    predictions, classifier_predictions = model(test_images)
 
-print(predictions - test_images)
+predictions = predictions.to('cpu')
+classifier_predictions = classifier_predictions.to('cpu')
+#accuracy of the classifier_predictions and test_labels
+correct = 0
+for i in range(len(classifier_predictions)):
+    if torch.argmax(classifier_predictions[i]) == test_labels[i]:
+        correct += 1
+print(f'Accuracy: {correct/len(classifier_predictions)}')
 
-#plot the predictions
 fig, axs = plt.subplots(2, 5)
 for i in range(10):
     axs[i//5, i%5].imshow(predictions[i].detach().numpy())
-    axs[i//5, i%5].set_title(test_labels[i])
+    axs[i//5, i%5].set_title(np.argmax(classifier_predictions[i].detach().numpy()))
     axs[i//5, i%5].axis('off')
 plt.show()
 
