@@ -18,6 +18,38 @@ seed = 42
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+parser = argparse.ArgumentParser(description='Train an autoencoder on synthetic data')
+parser.add_argument('--hidden_size', type=int, default=2, help='The hidden size of the LSTM')
+parser.add_argument('--num_layers', type=int, default=5, help='The number of layers in the LSTM')
+parser.add_argument('--epochs', type=int, default=10, help='The number of epochs to train the model')
+parser.add_argument('--optimizer', type=str, default='Adam', help='The optimizer to use')
+parser.add_argument('--learning_rate', type=float, default=0.01, help='The learning rate for the optimizer')
+parser.add_argument('--grad_clip', type=int, default=1, help='The gradient clipping value')
+parser.add_argument('--batch_size', type=int, default=32, help='The batch size for training')
+parser.add_argument('--random', action='store_true' , help='Whether to use a random seed')
+
+
+
+args = parser.parse_args()
+
+
+input_size = output_size = 1
+hidden_size = args.hidden_size
+num_layers = args.num_layers
+epochs = args.epochs
+optimizer_dict = {'Adam': torch.optim.Adam, 'SGD': torch.optim.SGD, 'adagrad': torch.optim.Adagrad, 'adadelta': torch.optim.Adadelta}
+optimizer = optimizer_dict[args.optimizer]
+learning_rate = args.learning_rate
+grad_clip = args.grad_clip
+batch_size = args.batch_size
+
+
+# Set the random seed for reproducibility
+if not args.random:    
+    seed = 42
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
 # Create synthetic data and move it to the chosen device
 synthetic_data = torch.rand(10_000, 50, 1).to(device)
 i = np.random.randint(20, 30)
@@ -30,14 +62,11 @@ validation_size = test_size = int(0.2 * total_size)
 
 train_data, validation_data, test_data = random_split(synthetic_data, [train_size, validation_size, test_size])
 
-input_size = output_size = 1
-hidden_size = 2
-num_layers = 5
-epochs = 10
-optimizer = torch.optim.Adam
-learning_rate = 0.01
-grad_clip = 1
-batch_size = 32
+
+
+
+
+
 
 train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
 validation_loader = DataLoader(validation_data, batch_size=batch_size, shuffle=True)
