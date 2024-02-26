@@ -14,8 +14,10 @@ class Encoder(nn.Module):
         #x is a DataLoader object
 
         (h_0, c_0) = self.init_hidden(len(x))
+        h_0 = h_0.to(x.device)
+        c_0 = c_0.to(x.device)
         lstm_out, (h_n, c_n) = self.lstm(x, (h_0, c_0))
-        return h_n, c_n
+        return lstm_out, h_n, c_n
     
     def init_hidden(self, batch_size):
         return (torch.zeros(self.num_layers, batch_size, self.hidden_size), 
@@ -30,8 +32,8 @@ class Decoder(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
     
-    def forward(self, x, h_n, c_n):
-        lstm_out, (h_n, c_n) = self.lstm(x, (h_n, c_n))
+    def forward(self, z, h_n, c_n):
+        lstm_out, (h_n, c_n) = self.lstm(z, (h_n, c_n))
         predictions = self.fc(lstm_out)
         return predictions
 
@@ -39,7 +41,7 @@ class AE(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size):
         super(AE, self).__init__()
         self.encoder = Encoder(input_size, hidden_size, num_layers)
-        self.decoder = Decoder(input_size, hidden_size, num_layers, output_size)
+        self.decoder = Decoder(hidden_size, hidden_size, num_layers, output_size)
         self.epochs = epochs
         self.optimizer = optimizer
         self.learning_rate = learning_rate
@@ -49,8 +51,13 @@ class AE(nn.Module):
         self.losses = []
     
     def forward(self, x):
-        h_n, c_n = self.encoder(x)
-        predictions = self.decoder(x, h_n, c_n)
+        z, h_n, c_n = self.encoder(x)
+        repeat_hidden = h_n[-1].unsqueeze(1).repeat(1, x.shape[1], 1)
+        h2_n = torch.zeros_like(h_n)
+        h2_n[0] = h_n[-1]
+        c2_n = torch.zeros_like(c_n)
+        c2_n[0] = c_n[-1]
+        predictions = self.decoder(repeat_hidden, h2_n, c2_n)
         return predictions
     
     def train(self, x):
@@ -59,41 +66,50 @@ class AE(nn.Module):
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
         # num_batches = x.shape[0] // self.batch_size
         for e in range(self.epochs):
-
+            epoch_loss = 0
+            batch_idx = 0
             for batch_idx, x_batch in enumerate(x):
-                
                 optimizer.zero_grad()
                 predictions = self.forward(x_batch)
-                loss = self.criterion(predictions, x_batch)
+                cur_loss = loss = self.criterion(predictions, x_batch)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 optimizer.step()
-                losses.append(loss.item())
+                epoch_loss += cur_loss.item()
+            epoch_loss /= batch_idx
+            losses.append(epoch_loss)
 
-            print(f'Epoch: {e+1}/{self.epochs}, Loss: {loss.item()}')
+
+            
+            print(f'Epoch: {e+1}/{self.epochs}, Loss: {loss.item()}')       
         self.losses = losses
 
 
 def main():
-    input_size = 10
-    hidden_size = 5
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f'Using {device} device')
+
+    input_size = 1
+    hidden_size = 8
     num_layers = 5
-    output_size = 10
+    output_size = 1
     epochs = 1000
     optimizer = torch.optim.Adam
-    learning_rate = 0.01
-    grad_clip = 1
-    batch_size = 32
+    learning_rate = 0.0035
+    grad_clip = 0.5
+    batch_size = 64
 
-    model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size)
-    x = torch.rand(100, 10, 10)
+    model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size).to(device)
+    x = torch.rand(100, 10, 1).to(device)
     x_loader = DataLoader(x, batch_size=batch_size, shuffle=True)
 
-    print(next(iter(x_loader)))
+    # print(next(iter(x_loader)))
     
     model.train(x_loader)
-    predictions = model(x)
-    print(predictions - x)
+    with torch.no_grad():
+        predictions = model(x)
+        print(predictions - x)
 
 
 
