@@ -56,7 +56,7 @@ class AE(nn.Module):
         predictions = self.decoder(repeat_hidden, h_n, c_n)
         return predictions
     
-    def train(self, x):
+    def learn(self, x):
         #x is a DataLoader object
         losses = []
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
@@ -102,7 +102,7 @@ def main():
 
     # print(next(iter(x_loader)))
     
-    model.train(x_loader)
+    model.learn(x_loader)
     with torch.no_grad():
         predictions = model(x)
         print(predictions - x)
