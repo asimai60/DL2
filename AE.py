@@ -17,7 +17,7 @@ class Encoder(nn.Module):
         h_0 = h_0.to(x.device)
         c_0 = c_0.to(x.device)
         lstm_out, (h_n, c_n) = self.lstm(x, (h_0, c_0))
-        return lstm_out, h_n, c_n
+        return h_n, c_n
     
     def init_hidden(self, batch_size):
         return (torch.zeros(self.num_layers, batch_size, self.hidden_size), 
@@ -51,13 +51,9 @@ class AE(nn.Module):
         self.losses = []
     
     def forward(self, x):
-        z, h_n, c_n = self.encoder(x)
+        h_n, c_n = self.encoder(x)
         repeat_hidden = h_n[-1].unsqueeze(1).repeat(1, x.shape[1], 1)
-        h2_n = torch.zeros_like(h_n)
-        h2_n[0] = h_n[-1]
-        c2_n = torch.zeros_like(c_n)
-        c2_n[0] = c_n[-1]
-        predictions = self.decoder(repeat_hidden, h2_n, c2_n)
+        predictions = self.decoder(repeat_hidden, h_n, c_n)
         return predictions
     
     def train(self, x):
