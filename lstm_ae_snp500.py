@@ -3,15 +3,16 @@ import torch
 from AE import *
 from torch.utils.data import DataLoader, TensorDataset
 import argparse
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser(description='Train an autoencoder with a classifier on MNIST')
 parser.add_argument('-hs', '--hidden_size', type=int, default=20, help='Size of the hidden layer')
-parser.add_argument('-layers','--num_layers', type=int, default=3, help='Number of layers in the LSTM')
-parser.add_argument('-epo','--epochs', type=int, default=10, help='Number of epochs to train the model')
+parser.add_argument('-layers','--num_layers', type=int, default=2, help='Number of layers in the LSTM')
+parser.add_argument('-epo','--epochs', type=int, default=15, help='Number of epochs to train the model')
 parser.add_argument('-opt','--optimizer', type=str, default='Adam', help='Optimizer to use')
-parser.add_argument('-lr','--learning_rate', type=float, default=0.001, help='Learning rate for the optimizer')
+parser.add_argument('-lr','--learning_rate', type=float, default=0.01, help='Learning rate for the optimizer')
 parser.add_argument('-gc','--grad_clip', type=int, default=1, help='Gradient clipping value')
-parser.add_argument('-bs','--batch_size', type=int, default=32, help='Batch size for training')
+parser.add_argument('-bs','--batch_size', type=int, default=64, help='Batch size for training')
 parser.add_argument('-seq','--sequence_length', type=int, default=30, help='Length of the sequence')
 args = parser.parse_args()
 
@@ -35,7 +36,7 @@ def prepare_data(device, sequence_length=30):
     num_subsequences = len(full_date_range) // sample_size
 
     all_subsequences = []  # List to store all subsequences
-
+    all_real_next_values_per_subsequence = []  # List to store all predictions per subsequence
 
     for symbol in df['symbol'].unique():
         symbol_df = df[df['symbol'] == symbol]
@@ -65,18 +66,105 @@ def prepare_data(device, sequence_length=30):
         subsequences = full_sequence_high_tensor.split(subsequence_length)
         all_subsequences.extend(subsequences)
 
+        real_next_values_per_subsequence = [subsequence[:1] for subsequence in subsequences[1:]]
+        last_subsequence_prediction = subsequences[-1][-1] + (subsequences[-1][-1] - subsequences[-1][-2])
+        real_next_values_per_subsequence.append(torch.tensor([last_subsequence_prediction]))  # Add the last subsequence's first value
+        all_real_next_values_per_subsequence.extend(real_next_values_per_subsequence)
+        
+    
     data = torch.stack(all_subsequences).unsqueeze(-1).to(device)
     dic_keys = [(symbol,i) for symbol in df['symbol'].unique() for i in range(num_subsequences)]
 
-    data_dict = {key : data[i] for i, key in enumerate(dic_keys)}
-
+    real_next_values = torch.stack(all_real_next_values_per_subsequence).to(device)
+    data_dict = {key : (data[i], real_next_values[i]) for i, key in enumerate(dic_keys)}
 
     split_ratio = 0.8
     train_data = data[:int(split_ratio * data.size(0))]
     test_data = data[int(split_ratio * data.size(0)):]
-    return train_data, test_data, data_dict
+    train_real_next_values = real_next_values[:int(split_ratio * real_next_values.size(0))]
+    test_real_next_values = real_next_values[int(split_ratio * real_next_values.size(0)):]
+    return train_data, test_data, train_real_next_values, test_real_next_values, data_dict
 
-train_data, test_data, symbol_data = prepare_data(device, args.sequence_length)
+class AEwithPredictor(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size):
+        super(AEwithPredictor, self).__init__()
+        self.encoder = Encoder(input_size, hidden_size, num_layers)
+        self.decoder = Decoder(hidden_size, hidden_size, num_layers, output_size)
+        self.predictor = nn.Linear(hidden_size, output_size)
+        self.epochs = epochs
+        self.optimizer = optimizer
+        self.learning_rate = learning_rate
+        self.grad_clip = grad_clip
+        self.batch_size = batch_size
+        self.reconstruction_criterion = nn.MSELoss()
+        self.prediction_criterion = nn.MSELoss()
+        self.losses = []
+    
+    def forward(self, x):
+        h_n, c_n = self.encoder(x)
+        context = h_n[-1]
+        repeat_hidden = context.unsqueeze(1).repeat(1, x.shape[1], 1)
+        reconstructions = self.decoder(repeat_hidden, h_n, c_n)
+        next_value_predictions = self.predictor(context)
+        return reconstructions, next_value_predictions
+    
+    def learn(self, x, y):
+        #x is a DataLoader object
+        losses = []
+        optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
+        # scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
+        # num_batches = x.shape[0] // self.batch_size
+        recon_losses_for_plot = []
+        pred_losses_for_plot = []
+        for e in range(self.epochs):
+            epoch_loss = 0
+            epoch_recon_loss = 0
+            epoch_pred_loss = 0
+            batch_idx = 0
+
+            for batch_idx, x_batch in enumerate(x):
+                x_batch = x_batch.to(device)
+                y_batch = y[batch_idx*self.batch_size:(batch_idx+1)*self.batch_size]
+
+                optimizer.zero_grad()
+                reconstructions, next_value_predictions = self.forward(x_batch)
+
+                recon_loss = self.reconstruction_criterion(reconstructions, x_batch)
+                pred_loss = self.prediction_criterion(next_value_predictions, y_batch)
+                loss = recon_loss + pred_loss
+
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+                epoch_recon_loss += recon_loss.item()
+                epoch_pred_loss += pred_loss.item()
+            
+            epoch_recon_loss /= batch_idx
+            epoch_pred_loss /= batch_idx
+            recon_losses_for_plot.append(epoch_recon_loss)
+            pred_losses_for_plot.append(epoch_pred_loss)
+
+            # scheduler.step()
+            print(f'Epoch {e+1}/{self.epochs}, Batch {batch_idx+1}/{len(x)}, Loss: {loss.item()}')
+            losses.append(epoch_loss / (batch_idx + 1))
+
+        plt.plot(recon_losses_for_plot, label='Reconstruction Loss')
+        plt.plot(pred_losses_for_plot, label='Prediction Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Reconstruction and Prediction Losses')
+        plt.legend()
+        plt.savefig('recon_pred_losses.png')
+        plt.show()
+
+        self.losses = losses
+        return losses
+
+
+
+
+train_data, test_data, train_preds, test_preds , symbol_data = prepare_data(device, args.sequence_length)
+print("Data prepared")
 
 initial_train_size = 365  # e.g., 365 days for daily data
 step_size = 30  # e.g., 30 days for monthly steps
@@ -99,33 +187,38 @@ grad_clip = args.grad_clip
 batch_size = args.batch_size
 
 
-model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size).to(device)
+model = AEwithPredictor(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size).to(device)
 train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=False)
+train_preds = train_preds.to(device)
 
 model.train()
-model.learn(train_loader)
+model.learn(train_loader, train_preds)
 
 model.eval()
 with torch.no_grad():
-    predictions = model(test_data)
+    predictions,next_value_predictions = model(test_data)
 
 test_data = test_data.cpu()
 predictions = predictions.cpu()
+distance = next_value_predictions - test_preds
+#accuracy of next value predictions
+loss = torch.nn.MSELoss()(next_value_predictions, test_preds)
+accuracy = torch.mean(torch.abs(distance))
+print(f'Accuracy of next value predictions: {accuracy.item()}')
+
 
 #plot the predictions and the actual data
-
-import matplotlib.pyplot as plt
+import random
+i = random.randint(0, len(test_data))
 plt.figure(figsize=(10, 6))
-plt.plot(test_data[10].detach().numpy(), label='Actual Data')
-plt.plot(predictions[10].detach().numpy(), label='Predictions')
+plt.plot(test_data[i].detach().numpy(), label='Actual Data')
+plt.plot(predictions[i].detach().numpy(), label='Predictions')
 plt.xlabel('Date')
 plt.ylabel('High Price')
-plt.title('Predictions vs Actual Data')
+plt.title('Predictions vs Actual Data, training params:\n' + "hidden_size: " + str(hidden_size) + ", num_layers: " + str(num_layers) + ", epochs: " + str(epochs) + ", optimizer: " + str(optimizer) + ",\n learning_rate: " + str(learning_rate) + ", grad_clip: " + str(grad_clip) + ", batch_size: " + str(batch_size) + ", sequence_length: " + str(args.sequence_length))
 plt.legend()
 plt.savefig('predictions_.png')
 plt.show()
-
-
 exit()
 
 for step in range(num_steps):

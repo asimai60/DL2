@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.utils.data import DataLoader, random_split
 
 class Encoder(nn.Module):
@@ -60,6 +61,7 @@ class AE(nn.Module):
         #x is a DataLoader object
         losses = []
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
+        # scheduler = lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
         # num_batches = x.shape[0] // self.batch_size
         for e in range(self.epochs):
             epoch_loss = 0
@@ -72,6 +74,7 @@ class AE(nn.Module):
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 optimizer.step()
                 epoch_loss += cur_loss.item()
+            # scheduler.step()
             epoch_loss /= batch_idx
             losses.append(epoch_loss)
 

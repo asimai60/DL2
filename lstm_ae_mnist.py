@@ -33,9 +33,9 @@ class AeWithClassifier(nn.Module):
     
     def forward(self, x):
         h_n, c_n = self.encoder(x)
-        repeat_hidden = h_n[-1].unsqueeze(1).repeat(1, x.shape[1], 1)
-        predictions = self.decoder(repeat_hidden, h_n, c_n)
         context = h_n[-1]
+        repeat_hidden = context.unsqueeze(1).repeat(1, x.shape[1], 1)
+        predictions = self.decoder(repeat_hidden, h_n, c_n)
         classifier_predictions = self.classifier(context)
         return predictions, classifier_predictions
     
