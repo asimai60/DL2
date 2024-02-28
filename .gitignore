@@ -1,3 +1,6 @@
 mnist_data/
 *.png
 *.csv
+garbage.py
+tester.py
+previous_xnp500.py
