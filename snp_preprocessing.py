@@ -1,8 +1,7 @@
 import pandas as pd
 import torch
 
-
-def prepare_data(device, sequence_length=30):
+def load_data():
     df = pd.read_csv('SP 500 Stock Prices 2014-2017.csv')
 
     # Convert the 'date' column to datetime
@@ -10,13 +9,18 @@ def prepare_data(device, sequence_length=30):
     df = df.dropna(subset=['date'])
 
     df = df[['symbol', 'date', 'high']]
+    return df
+
+def prepare_data(device, sequence_length=30):
+    df = load_data()
 
     full_date_range = pd.date_range(start=df['date'].min(), end=df['date'].max())
     sample_size = sequence_length  # e.g., 30 for monthly data
     # Initialize a dictionary to store processed data for each symbol
-    symbol_data = {}
-    num_subsequences = len(full_date_range) // sample_size
 
+    num_subsequences = full_date_range.size // sample_size
+
+    long_sequences = []
     all_subsequences = []  # List to store all subsequences
     all_real_next_values_per_subsequence = []  # List to store all predictions per subsequence
     min_max_dict = {}
@@ -48,14 +52,21 @@ def prepare_data(device, sequence_length=30):
 
         subsequences = full_sequence_high_tensor.split(subsequence_length)
         
+        subsequences = [((subsequence - torch.min(subsequence))/(torch.max(subsequence)-torch.min(subsequence))) for subsequence in subsequences]
 
         real_next_values_per_subsequence = [subsequence[-1] for subsequence in subsequences]
+
+        
+        subsequences = [subsequence[:-1] for subsequence in subsequences]
+
+        
         
         all_real_next_values_per_subsequence.extend(real_next_values_per_subsequence)
-        subsequences = [subsequence[:-1] for subsequence in subsequences]
-        all_subsequences.extend(subsequences)
         
-    
+        all_subsequences.extend(subsequences)
+        long_sequences.append(full_sequence_high_tensor)
+        
+    long_sequences = torch.stack(long_sequences).unsqueeze(-1).to(device)
     data = torch.stack(all_subsequences).unsqueeze(-1).to(device)
     dic_keys = [(symbol,i) for symbol in df['symbol'].unique() for i in range(num_subsequences)]
 
@@ -66,6 +77,7 @@ def prepare_data(device, sequence_length=30):
     split_ratio = 0.8
     train_data = data[:int(split_ratio * data.size(0))]
     train_real_next_values = real_next_values[:int(split_ratio * real_next_values.size(0))]
+    
     indices = torch.randperm(train_data.size(0))
     train_data = train_data[indices]
     train_real_next_values = train_real_next_values[indices]
@@ -73,4 +85,4 @@ def prepare_data(device, sequence_length=30):
     test_data = data[int(split_ratio * data.size(0)):]
     test_real_next_values = real_next_values[int(split_ratio * real_next_values.size(0)):]
 
-    return train_data, test_data, train_real_next_values, test_real_next_values, data_dict
+    return train_data, test_data, train_real_next_values, test_real_next_values, data_dict, long_sequences

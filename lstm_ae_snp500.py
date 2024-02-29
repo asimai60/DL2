@@ -5,7 +5,8 @@ from torch.utils.data import DataLoader, TensorDataset
 import argparse
 import matplotlib.pyplot as plt
 import random
-from snp_preprocessing import prepare_data
+
+from snp_preprocessing import *
 
 class AEwithPredictor(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size):
@@ -28,6 +29,7 @@ class AEwithPredictor(nn.Module):
         repeat_hidden = context.unsqueeze(1).repeat(1, x.shape[1], 1)
         reconstructions = self.decoder(repeat_hidden, h_n, c_n)
         next_value_predictions = self.predictor(context)
+        next_value_predictions = nn.functional.relu(next_value_predictions)
         return reconstructions, next_value_predictions
     
     def learn(self, x, y):
@@ -116,7 +118,7 @@ def multi_step_prediction(symbol_data, model):
 parser = argparse.ArgumentParser(description='Train an autoencoder with a classifier on MNIST')
 parser.add_argument('-hs', '--hidden_size', type=int, default=20, help='Size of the hidden layer')
 parser.add_argument('-layers','--num_layers', type=int, default=2, help='Number of layers in the LSTM')
-parser.add_argument('-epo','--epochs', type=int, default=5, help='Number of epochs to train the model')
+parser.add_argument('-epo','--epochs', type=int, default=10, help='Number of epochs to train the model')
 parser.add_argument('-opt','--optimizer', type=str, default='Adam', help='Optimizer to use')
 parser.add_argument('-lr','--learning_rate', type=float, default=0.01, help='Learning rate for the optimizer')
 parser.add_argument('-gc','--grad_clip', type=int, default=1, help='Gradient clipping value')
@@ -128,7 +130,7 @@ args = parser.parse_args()
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using {device} device')
 
-train_data, test_data, train_preds, test_preds , symbol_data = prepare_data(device, args.sequence_length)
+train_data, test_data, train_preds, test_preds , symbol_data, long_data = prepare_data(device, args.sequence_length)
 print("Data prepared")
 
 input_size = output_size = 1
@@ -156,7 +158,20 @@ multi_step_prediction(multi_step_prediction_data, model)
 
 with torch.no_grad():
     predictions,next_value_predictions = model(test_data)
+#     long_predictions, _ = model(long_data[-1].unsqueeze(0))
 
+# #plot the long predictions and the actual data
+# long_plot_data = long_data[-1].flatten().cpu()
+# long_predictions = long_predictions.flatten().cpu()
+# plt.figure(figsize=(10, 6))
+# plt.plot(long_plot_data.detach().numpy(), label='Actual Data')
+# plt.plot(long_predictions.detach().numpy(), label='Predictions')
+# plt.xlabel('Day')
+# plt.ylabel('High Price')
+# plt.title('Predictions vs Actual Data')
+# plt.legend()
+# plt.savefig('long_predictions.png')
+# plt.show()
 
 test_data = test_data.cpu()
 predictions = predictions.cpu()
@@ -179,8 +194,6 @@ for key, value in symbol_data.items():
         data = value[0]
         with torch.no_grad():
             predictions, next_value_predictions = model(data.unsqueeze(0))
-            predictions = predictions * (value[2][1] - value[2][0]) + value[2][0]
-            data = data * (value[2][1] - value[2][0]) + value[2][0]
 
             predictions = predictions.flatten().cpu()
             data = data.flatten().cpu()
@@ -202,7 +215,7 @@ for key, value in symbol_data.items():
 PLOTTING = False
 if PLOTTING: 
 
-    import matplotlib.pyplot as plt
+    symbol_data = long_data
 
     # Example symbol
     symbol = 'AMZN'
