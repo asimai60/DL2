@@ -11,8 +11,6 @@ class Encoder(nn.Module):
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
     
     def forward(self, x):
-        #x is a DataLoader object
-
         (h_0, c_0) = self.init_hidden(len(x))
         h_0 = h_0.to(x.device)
         c_0 = c_0.to(x.device)
@@ -21,7 +19,7 @@ class Encoder(nn.Module):
     
     def init_hidden(self, batch_size):
         return (torch.zeros(self.num_layers, batch_size, self.hidden_size), 
-                torch.zeros(self.num_layers, batch_size, self.hidden_size)) #(h_0, c_0), might need to change num layers to sequence length
+                torch.zeros(self.num_layers, batch_size, self.hidden_size))
 
 class Decoder(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, output_size):
@@ -56,29 +54,59 @@ class AE(nn.Module):
         predictions = self.decoder(repeat_hidden, h_n, c_n)
         return predictions
     
-    def learn(self, x):
-        #x is a DataLoader object
+    def learn(self, x):#),validation_loader):
+        self.train()
         losses = []
+        val_losses = []
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
-        # num_batches = x.shape[0] // self.batch_size
+
         for e in range(self.epochs):
             epoch_loss = 0
             batch_idx = 0
             for batch_idx, x_batch in enumerate(x):
                 optimizer.zero_grad()
                 predictions = self.forward(x_batch)
-                cur_loss = loss = self.criterion(predictions, x_batch)
+                loss = self.criterion(predictions, x_batch)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 optimizer.step()
-                epoch_loss += cur_loss.item()
+                epoch_loss += loss.item()
             epoch_loss /= batch_idx
             losses.append(epoch_loss)
+            print(f'Epoch: {e+1}/{self.epochs}, Loss: {epoch_loss}')
 
+            # with torch.no_grad():
+            #     self.eval()  # Set the model to evaluation mode
+            #     val_epoch_loss = 0
+            #     for val_batch_idx, x_val_batch in enumerate(validation_loader):
+            #         predictions_val = self.forward(x_val_batch)
+            #         val_loss = self.criterion(predictions_val, x_val_batch)
+            #         val_epoch_loss += val_loss.item()
 
+            #     # Compute average validation loss for the epoch
+            #     val_epoch_loss /= (val_batch_idx + 1)
+            #     val_losses.append(val_epoch_loss)
+
+            #     print(f'Epoch: {e+1}/{self.epochs}, Loss: {epoch_loss}, Val Loss: {val_epoch_loss}')
+            #     self.train()  # Set the model back to training mode
             
-            print(f'Epoch: {e+1}/{self.epochs}, Loss: {loss.item()}')       
+            
         self.losses = losses
+
+    def evaluate(self, validation_loader):
+        self.eval()  # set the model to evaluation mode
+        total_loss = 0
+        total_batches = len(validation_loader)
+
+        with torch.no_grad():  # no gradients needed
+            for x_val_batch in validation_loader:
+                predictions = self.forward(x_val_batch)
+                loss = self.criterion(predictions, x_val_batch)
+                total_loss += loss.item()
+
+        average_loss = total_loss / total_batches
+        self.train()  # set the model back to training mode
+        return average_loss
 
 
 def main():
@@ -99,8 +127,6 @@ def main():
     model = AE(input_size, hidden_size, num_layers, output_size, epochs, optimizer, learning_rate, grad_clip, batch_size).to(device)
     x = torch.rand(100, 10, 1).to(device)
     x_loader = DataLoader(x, batch_size=batch_size, shuffle=True)
-
-    # print(next(iter(x_loader)))
     
     model.learn(x_loader)
     with torch.no_grad():
