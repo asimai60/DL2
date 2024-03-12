@@ -1,12 +1,7 @@
 import argparse
-import os
-import sys
-import time
-
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torchvision
 from torch.utils.data import DataLoader, random_split
 
@@ -122,7 +117,6 @@ optimizer = optimizer_dict[args.optimizer]
 learning_rate = args.learning_rate
 grad_clip = args.grad_clip
 batch_size = args.batch_size
-# Set the random seed for reproducibility
 if not args.random:    
     seed = 42
     np.random.seed(seed)
@@ -132,7 +126,6 @@ if not args.random:
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Using {device} device')
 
-#transform the data to a tensor and normalize it
 transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
                                 torchvision.transforms.Normalize((0.5,), (0.5,))])
 
@@ -142,11 +135,8 @@ if args.pixel_input:
                                 torchvision.transforms.Lambda(lambda x: torch.flatten(x).unsqueeze(-1))])
 
 
-#mnist_data is a tensor, it holds num_images X 2, where the first element is the image and the second is the label
 mnist_train_data = torchvision.datasets.MNIST('mnist_data', train=True, download=True, transform=transform)
 mnist_test_data = torchvision.datasets.MNIST('mnist_data', train=False, download=True, transform=transform)
-
-# Create a DataLoader
 
 train_images = []
 train_labels = []
@@ -173,17 +163,6 @@ print("start training....")
 model.train()
 model.learn(train_loader, train_labels_loader,test_images,test_labels_loader,pixel_input=args.pixel_input)
 
-# Plot the loss
-plt.plot([i+1 for i in range(epochs)], model.losses)
-
-plt.xlabel('Epochs')
-plt.ylabel('Loss')
-plt.yscale('log')
-plt.title('Training Loss')
-plt.savefig('loss.png')
-plt.show()
-
-# Test the model
 model.eval()
 with torch.no_grad():
     if args.pixel_input:
@@ -194,7 +173,8 @@ with torch.no_grad():
 if not args.pixel_input:
     predictions = predictions.to('cpu')
 classifier_predictions = classifier_predictions.to('cpu')
-#accuracy of the classifier_predictions and test_labels
+
+
 correct = 0
 for i in range(len(classifier_predictions)):
     if torch.argmax(classifier_predictions[i]) == test_labels[i]:
@@ -203,19 +183,14 @@ print(f'Accuracy: {correct/len(classifier_predictions)}')
 
 import random
 if not args.pixel_input:
-    # Adjust the subplot structure to have 3 rows and 2 columns
-    fig, axs = plt.subplots(3, 2, figsize=(10, 15))
-    
-    # Select three random samples instead of ten
     sample_indices = [random.randint(0, len(predictions) - 1) for _ in range(3)]
-    
+
+    fig, axs = plt.subplots(3, 2, figsize=(10, 15))
     for j, i in enumerate(sample_indices):
-        # Display the original image on the left column
         axs[j, 0].imshow(test_images[i].view(28, 28).detach().cpu().numpy())
         axs[j, 0].set_title(f"Original")
         axs[j, 0].axis('off')
         
-        # Display the reconstructed image on the right column
         axs[j, 1].imshow(predictions[i].view(28, 28).detach().cpu().numpy())
         axs[j, 1].set_title(f"Reconstructed - {np.argmax(classifier_predictions[i].detach().cpu().numpy())}")
         axs[j, 1].axis('off')

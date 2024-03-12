@@ -57,6 +57,20 @@ def train_model(model, train_loader,num_epochs, learning_rate=0.01, grad_clip=No
         epoch_recon_losses = []
         epoch_pred_losses = []
         for i, x in enumerate(train_loader):
+            ONLY_RECONSTRUCTION = False
+            if ONLY_RECONSTRUCTION:
+                optimizer.zero_grad()
+                x = x.to(model.device)
+                recon, _ = model(x)
+                recon_loss = model.recon_criterion(recon, x)
+                recon_loss.backward()
+                if grad_clip:
+                    nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                epoch_losses.append(recon_loss.item())
+                epoch_recon_losses.append(recon_loss.item())
+                continue
+
             x_batch = x[:, :-1, :]
             y_batch = x[:, 1:, :]
 
@@ -79,7 +93,7 @@ def train_model(model, train_loader,num_epochs, learning_rate=0.01, grad_clip=No
             epoch_pred_losses.append(pred_loss.item())
         losses.append(np.mean(epoch_losses))
         recon_losses.append(np.mean(epoch_recon_losses))
-        pred_losses.append(np.mean(epoch_pred_losses))
+        pred_losses.append(np.mean(epoch_pred_losses)) if not ONLY_RECONSTRUCTION else pred_losses.append(0)
 
         print(f'Epoch {epoch+1}/{num_epochs}, Loss: {losses[-1]}')
 
@@ -101,7 +115,7 @@ def min_max_scale(x):
 parser = argparse.ArgumentParser(description='Train an autoencoder with a classifier on MNIST')
 parser.add_argument('-hs', '--hidden_size', type=int, default=40, help='Size of the hidden layer')
 parser.add_argument('-layers','--num_layers', type=int, default=2, help='Number of layers in the LSTM')
-parser.add_argument('-epo','--epochs', type=int, default=1, help='Number of epochs to train the model')
+parser.add_argument('-epo','--epochs', type=int, default=3, help='Number of epochs to train the model')
 parser.add_argument('-opt','--optimizer', type=str, default='Adam', help='Optimizer to use')
 parser.add_argument('-lr','--learning_rate', type=float, default=0.01, help='Learning rate for the optimizer')
 parser.add_argument('-gc','--grad_clip', type=int, default=5, help='Gradient clipping value')
@@ -122,7 +136,7 @@ batch_size = args.batch_size
 subseq_len = 50
 
 
-df = pd.read_csv('snp500.csv')
+df = pd.read_csv('SP 500 Stock Prices 2014-2017.csv')
 df = df[['date', 'symbol', 'high']]
 df.dropna(subset=['date'], inplace=True)
 df = df.groupby('symbol').filter(lambda x: x['high'].count() >= 1000)
@@ -161,12 +175,23 @@ for i in range(3):
     random_test_index = np.random.randint(0, len(test_data)-1)
     test_sample = test_data[random_test_index:random_test_index+1]
 
-    test_sample_subseqs = min_max_scale(test_sample[:,:49,:]).reshape(-1, subseq_len, 1).to(device)
+    test_sample_subseqs = min_max_scale(test_sample[:,:50,:]).reshape(-1, subseq_len, 1).to(device)
     recon, pred = model(test_sample_subseqs)
     recon = recon.squeeze().detach().cpu().numpy()
     pred = pred.squeeze().detach().cpu().numpy()
     test_sample_subseqs = test_sample_subseqs.squeeze().detach().cpu().numpy()
 
+    ONLY_RECONSTRUCTION = False
+    if ONLY_RECONSTRUCTION:
+        plt.plot(test_sample_subseqs, label='Original')
+        plt.plot(recon, label='Reconstructed')
+        plt.xlabel('Days')
+        plt.ylabel('Normalized Price')
+        plt.title('Original vs. Reconstructed Prices')
+        plt.legend()
+        plt.savefig(f'recon_subseq_{i}.png')
+        plt.show()
+        continue
     fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
     axs[0].plot(test_sample_subseqs, label='Original')
@@ -176,8 +201,8 @@ for i in range(3):
     axs[0].set_title('Original vs. Reconstructed Prices')
     axs[0].legend()
 
-    axs[1].plot(test_sample_subseqs, label='Original')
-    axs[1].plot(pred, label='Predicted')
+    axs[1].plot(test_sample_subseqs[1:], label='Original')
+    axs[1].plot(pred[:-1], label='Predicted')
     axs[1].set_xlabel('Days')
     axs[1].set_ylabel('Normalized Price')
     axs[1].set_title('Original vs. Predicted Prices')
