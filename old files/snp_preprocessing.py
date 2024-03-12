@@ -52,37 +52,48 @@ def prepare_data(device, sequence_length=30):
 
         subsequences = full_sequence_high_tensor.split(subsequence_length)
         
-        subsequences = [((subsequence - torch.min(subsequence))/(torch.max(subsequence)-torch.min(subsequence))) for subsequence in subsequences]
+        subsequences = [((subsequence - torch.min(subsequence))/(torch.max(subsequence)-torch.min(subsequence))) if (torch.max(subsequence) - torch.min(subsequence) != 0) else subsequence for subsequence in subsequences]
+        subsequences = torch.stack(subsequences)
+        std_dev = torch.std(subsequences, dim=1)
+        mask = std_dev > 0
+        subsequences = subsequences[mask]
 
-        real_next_values_per_subsequence = [subsequence[-1] for subsequence in subsequences]
+        # real_next_values_per_subsequence = [subsequence[-1] for subsequence in subsequences]
 
         
-        subsequences = [subsequence[:-1] for subsequence in subsequences]
+        # subsequences = [subsequence[:-1] for subsequence in subsequences]
 
         
         
-        all_real_next_values_per_subsequence.extend(real_next_values_per_subsequence)
+        # all_real_next_values_per_subsequence.extend(real_next_values_per_subsequence)
         
         all_subsequences.extend(subsequences)
         long_sequences.append(full_sequence_high_tensor)
         
     long_sequences = torch.stack(long_sequences).unsqueeze(-1).to(device)
-    data = torch.stack(all_subsequences).unsqueeze(-1).to(device)
+    data = torch.stack(all_subsequences)
+    data = data.unsqueeze(-1).to(device)
+   
     dic_keys = [(symbol,i) for symbol in df['symbol'].unique() for i in range(num_subsequences)]
 
-    real_next_values = torch.stack(all_real_next_values_per_subsequence).to(device)
-    data_dict = {key : (data[i], real_next_values[i],min_max_dict[key[0]]) for i, key in enumerate(dic_keys)}
+    # real_next_values = torch.stack(all_real_next_values_per_subsequence).to(device)
+    data_dict = {}#{key : (data[i], real_next_values[i],min_max_dict[key[0]]) for i, key in enumerate(dic_keys)}
 
     
     split_ratio = 0.8
     train_data = data[:int(split_ratio * data.size(0))]
-    train_real_next_values = real_next_values[:int(split_ratio * real_next_values.size(0))]
+    # train_real_next_values = real_next_values[:int(split_ratio * real_next_values.size(0))]
     
-    indices = torch.randperm(train_data.size(0))
-    train_data = train_data[indices]
-    train_real_next_values = train_real_next_values[indices]
+    # indices = torch.randperm(train_data.size(0))
+    # train_data = train_data[indices]
+    # train_real_next_values = train_real_next_values[indices]
     
     test_data = data[int(split_ratio * data.size(0)):]
-    test_real_next_values = real_next_values[int(split_ratio * real_next_values.size(0)):]
+    # test_real_next_values = real_next_values[int(split_ratio * real_next_values.size(0)):]
 
-    return train_data, test_data, train_real_next_values, test_real_next_values, data_dict, long_sequences
+    grouped = df.groupby('symbol')
+
+    symbol_dict = {symbol: list(zip(group['date'], group['high'])) for symbol, group in grouped}
+
+
+    return train_data, test_data, data_dict, long_sequences, symbol_dict

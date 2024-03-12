@@ -27,8 +27,8 @@ class AeWithClassifier(nn.Module):
         self.criterion = nn.MSELoss()
         self.losses = []
 
-        self.classifier = nn.Sequential(
-            nn.Linear(hidden_size, num_classes))
+        self.classifier = nn.Linear(hidden_size, num_classes)
+        
         self.classifier_criterion = nn.CrossEntropyLoss()
     
     def forward(self, x):
@@ -37,10 +37,16 @@ class AeWithClassifier(nn.Module):
         repeat_hidden = context.unsqueeze(1).repeat(1, x.shape[1], 1)
         predictions = self.decoder(repeat_hidden, h_n, c_n)
         classifier_predictions = self.classifier(context)
-        return predictions, classifier_predictions
+
+
+        if x.shape[1] == 28:
+            return predictions, classifier_predictions
+        else:
+            return classifier_predictions
     
-    def learn(self, x, y):
+    def learn(self, x, y, test_x, test_y, pixel_input=False):
         losses = []
+        accuracies = []
         optimizer = self.optimizer(self.parameters(), lr=self.learning_rate)
 
         for epoch in range(self.epochs):
@@ -50,25 +56,55 @@ class AeWithClassifier(nn.Module):
                 y_batch = y[batch_idx*self.batch_size:(batch_idx+1)*self.batch_size]
 
                 optimizer.zero_grad()
-                predictions, classifier_predictions = self.forward(x_batch)
+                if not pixel_input:
+                    predictions, classifier_predictions = self.forward(x_batch)
+                    recon_loss = self.criterion(predictions, x_batch)
+                else:
+                    classifier_predictions = self.forward(x_batch)
 
-                recon_loss = self.criterion(predictions, x_batch)
                 class_loss = self.classifier_criterion(classifier_predictions, y_batch)
-                loss = recon_loss + class_loss
+                loss = recon_loss + class_loss if not pixel_input else class_loss
 
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), self.grad_clip)
                 optimizer.step()
+
+            PLOT = True
+            if PLOT:
+                _ ,test_class = self.forward(test_x)
+                preds = torch.argmax(test_class, dim=1)
+                correct = (preds == test_y).sum().item()
+                accuracy = correct/len(test_y)
+                accuracies.append(accuracy)
             losses.append(loss.item())
             print(f'Epoch: {epoch+1}/{self.epochs}, Loss: {loss.item()}')
+
         self.losses = losses
+
+        plt.plot([i+1 for i in range(self.epochs)], losses)
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.yscale('log')
+        plt.title('Training Loss')
+        plt.savefig('recon_class_loss.png')
+        plt.show()
+
+        if PLOT:
+            plt.plot([i+1 for i in range(self.epochs)], accuracies)
+            plt.xlabel('Epochs')
+            plt.ylabel('Accuracy')
+            plt.title('Training Accuracy')
+            plt.savefig('class_accuracy.png')
+            plt.show()
+
+
         
 
 
 parser = argparse.ArgumentParser(description='Train an autoencoder with a classifier on MNIST')
 parser.add_argument('-hs', '--hidden_size', type=int, default=27, help='Size of the hidden layer')
-parser.add_argument('-layers','--num_layers', type=int, default=4, help='Number of layers in the LSTM')
-parser.add_argument('-epo','--epochs', type=int, default=100, help='Number of epochs to train the model')
+parser.add_argument('-layers','--num_layers', type=int, default=2, help='Number of layers in the LSTM')
+parser.add_argument('-epo','--epochs', type=int, default=5, help='Number of epochs to train the model')
 parser.add_argument('-opt','--optimizer', type=str, default='Adam', help='Optimizer to use')
 parser.add_argument('-lr','--learning_rate', type=float, default=0.01, help='Learning rate for the optimizer')
 parser.add_argument('-gc','--grad_clip', type=int, default=1, help='Gradient clipping value')
@@ -103,7 +139,7 @@ transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
 if args.pixel_input:
     transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
                                 torchvision.transforms.Normalize((0.5,), (0.5,)),
-                                torchvision.transforms.Lambda(lambda x: torch.flatten(x))])
+                                torchvision.transforms.Lambda(lambda x: torch.flatten(x).unsqueeze(-1))])
 
 
 #mnist_data is a tensor, it holds num_images X 2, where the first element is the image and the second is the label
@@ -127,6 +163,7 @@ for image, label in mnist_test_data:
     test_images.append(image)
     test_labels.append(label)
 test_images = torch.stack(test_images).squeeze(1).to(device)
+test_labels_loader = torch.tensor(test_labels).to(device)
 
 
 
@@ -134,7 +171,7 @@ model = AeWithClassifier(input_size, hidden_size, num_layers, output_size, epoch
 print("start training....")
 
 model.train()
-model.learn(train_loader, train_labels_loader)
+model.learn(train_loader, train_labels_loader,test_images,test_labels_loader,pixel_input=args.pixel_input)
 
 # Plot the loss
 plt.plot([i+1 for i in range(epochs)], model.losses)
@@ -149,9 +186,13 @@ plt.show()
 # Test the model
 model.eval()
 with torch.no_grad():
-    predictions, classifier_predictions = model(test_images)
+    if args.pixel_input:
+        _, classifier_predictions = model(test_images)
+    else:
+        predictions, classifier_predictions = model(test_images)
 
-predictions = predictions.to('cpu')
+if not args.pixel_input:
+    predictions = predictions.to('cpu')
 classifier_predictions = classifier_predictions.to('cpu')
 #accuracy of the classifier_predictions and test_labels
 correct = 0
@@ -161,13 +202,25 @@ for i in range(len(classifier_predictions)):
 print(f'Accuracy: {correct/len(classifier_predictions)}')
 
 import random
-fig, axs = plt.subplots(2, 5)
-sample_indices = [random.randint(0, len(predictions)) for i in range(10)]
-for j,i in enumerate(sample_indices):
-    axs[j//5, j%5].imshow(predictions[i].view(28,28).detach().numpy())
-    axs[j//5, j%5].set_title(np.argmax(classifier_predictions[i].detach().numpy()))
-    axs[j//5, j%5].axis('off')
-plt.savefig('reconstructed_images.png')
-plt.show()
+if not args.pixel_input:
+    # Adjust the subplot structure to have 3 rows and 2 columns
+    fig, axs = plt.subplots(3, 2, figsize=(10, 15))
+    
+    # Select three random samples instead of ten
+    sample_indices = [random.randint(0, len(predictions) - 1) for _ in range(3)]
+    
+    for j, i in enumerate(sample_indices):
+        # Display the original image on the left column
+        axs[j, 0].imshow(test_images[i].view(28, 28).detach().cpu().numpy())
+        axs[j, 0].set_title(f"Original")
+        axs[j, 0].axis('off')
+        
+        # Display the reconstructed image on the right column
+        axs[j, 1].imshow(predictions[i].view(28, 28).detach().cpu().numpy())
+        axs[j, 1].set_title(f"Reconstructed - {np.argmax(classifier_predictions[i].detach().cpu().numpy())}")
+        axs[j, 1].axis('off')
+    
+    plt.savefig('comparison_original_reconstructed.png')
+    plt.show()
 
 
